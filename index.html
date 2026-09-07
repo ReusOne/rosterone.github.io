@@ -38,7 +38,7 @@
           <i class="fas fa-calendar-check text-xl text-white"></i>
         </div>
         <h1 class="text-3xl sm:text-4xl font-bold tracking-tight bg-gradient-to-r from-emerald-700 to-teal-600 bg-clip-text text-transparent">
-          Roster Line Recommender
+          Roster Line Selection Tool
         </h1>
       </div>
       <p class="text-slate-600 max-w-2xl mx-auto text-sm sm:text-base">
@@ -824,7 +824,7 @@
       const legendLetters = isAero
         ? 'D = Day, A = Afternoon (/OC = on call), N = Night, T = Training, O = Off.'
         : 'D = Day, A = Afternoon, N = Night, O = Off.';
-      const rotationNote = isAero ? ' "— now on Line N —" marks each weekly rotation to the next line (the full 9-line sequence repeats every 9 weeks).' : '';
+      const rotationNote = isAero ? ' "Line N —" marks each weekly rotation to the next line (the full 9-line sequence repeats every 9 weeks).' : '';
       html += `<p class="text-xs text-slate-500 mt-2">Legend: number = date, ${legendLetters} Bold green = required &amp; off. Bold red = required but still working.${rotationNote}</p>`;
 
       container.innerHTML = html;
