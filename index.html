@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Roster Line Recommender</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .day-pill { min-width: 2.75rem; }
+    .fade-in { animation: fadeIn 0.4s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .score-bar { transition: width 0.6s ease-out; }
+    @media print {
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-[#F4FAF7] text-slate-800 min-h-screen relative">
+  <!-- Subtle hexagon watermark background -->
+  <svg class="fixed inset-0 w-full h-full -z-10 pointer-events-none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <pattern id="hexPattern" width="112" height="200" patternUnits="userSpaceOnUse">
+        <path d="M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100" fill="none" stroke="#0F6B4C" stroke-width="1.5" transform="scale(2)"/>
+        <path d="M28 0L28 34L0 50L0 84L28 100L56 84L56 50L28 34" fill="none" stroke="#0F6B4C" stroke-width="1.5" transform="scale(2)"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#hexPattern)" opacity="0.09"></rect>
+  </svg>
+
+  <div class="max-w-5xl mx-auto px-4 py-8 sm:py-12 relative z-10">
+    <!-- Header -->
+    <header class="mb-10 text-center">
+      <div class="inline-flex items-center gap-3 mb-3">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-900/15">
+          <i class="fas fa-calendar-check text-xl text-white"></i>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-bold tracking-tight bg-gradient-to-r from-emerald-700 to-teal-600 bg-clip-text text-transparent">
+          Roster Line Recommender
+        </h1>
+      </div>
+      <p class="text-slate-600 max-w-2xl mx-auto text-sm sm:text-base">
+        Enter the days you need off (any dates, any combination). The tool ranks the 9 rotating lines and recommends the best matches for your 4-on / 5-off roster.
+      </p>
+    </header>
+
+    <!-- Main Card -->
+    <div class="bg-white/90 backdrop-blur border border-emerald-100 rounded-2xl shadow-xl shadow-emerald-950/5 overflow-hidden">
+      <!-- Config Section -->
+      <div class="p-6 sm:p-8 border-b border-emerald-100">
+        <div class="grid sm:grid-cols-3 gap-6 mb-8">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Roster Start Date</label>
+            <input type="date" id="startDate" value="2026-12-05"
+                   class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Roster End Date</label>
+            <input type="date" id="endDate" value="2027-02-05"
+                   class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Shift Pattern</label>
+            <select id="shiftPattern"
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition">
+              <option value="DDNN" selected>DDNN — Day, Day, Night, Night</option>
+              <option value="DDAN">DDAN — Day, Day, Afternoon, Night</option>
+              <option value="DDDD">DDDD — Day, Day, Day, Day</option>
+            </select>
+            <p class="text-xs text-slate-500 mt-1.5">Applies to the 4 on-days of every line</p>
+          </div>
+        </div>
+
+        <!-- Required Days Off -->
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <label class="text-sm font-medium text-slate-700">Required Days Off</label>
+            <span class="text-xs text-slate-500">Add any number of dates or ranges</span>
+          </div>
+
+          <!-- Quick Add Controls -->
+          <div class="flex flex-wrap gap-3 mb-2">
+            <div class="flex items-center gap-2 bg-emerald-50/70 rounded-xl p-1.5 border border-emerald-100">
+              <input type="date" id="singleDate" class="bg-transparent border-0 text-sm px-2 py-1.5 focus:outline-none text-slate-800" />
+              <button onclick="addSingleDate()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition">
+                <i class="fas fa-plus mr-1"></i> Add Date
+              </button>
+            </div>
+            <div class="flex items-center gap-2 bg-emerald-50/70 rounded-xl p-1.5 border border-emerald-100">
+              <input type="date" id="rangeStart" class="bg-transparent border-0 text-sm px-2 py-1.5 focus:outline-none text-slate-800" />
+              <span class="text-slate-400 text-sm">→</span>
+              <input type="date" id="rangeEnd" class="bg-transparent border-0 text-sm px-2 py-1.5 focus:outline-none text-slate-800" />
+              <button onclick="addRange()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition">
+                <i class="fas fa-plus mr-1"></i> Add Range
+              </button>
+            </div>
+          </div>
+
+          <!-- Inline status / warning message -->
+          <div id="dateStatusMsg" class="hidden text-xs mb-3 rounded-lg px-3 py-2"></div>
+
+          <!-- Selected Dates Pills -->
+          <div id="selectedDates" class="flex flex-wrap gap-2 min-h-[3rem] p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <span id="emptyHint" class="text-slate-400 text-sm italic self-center">No dates added yet — use the controls above</span>
+          </div>
+        </div>
+
+        <!-- Preferred / Available Lines -->
+        <div class="mb-8">
+          <label class="block text-sm font-medium text-slate-700 mb-2">Lines you are willing to accept <span class="text-slate-500 font-normal">(leave all checked for best overall)</span></label>
+          <div class="flex flex-wrap gap-2" id="lineCheckboxes">
+            <!-- generated by JS -->
+          </div>
+        </div>
+
+        <!-- Generate Button -->
+        <button onclick="generateRecommendations()"
+                class="w-full sm:w-auto bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold px-8 py-3 rounded-xl shadow-lg shadow-emerald-900/15 transition transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2">
+          <i class="fas fa-magic"></i>
+          Generate Top 3 Recommendations
+        </button>
+      </div>
+
+      <!-- Results Section -->
+      <div id="resultsSection" class="hidden p-6 sm:p-8">
+        <h2 class="text-xl font-semibold mb-6 flex items-center gap-2 text-slate-800">
+          <i class="fas fa-trophy text-amber-500"></i>
+          Recommended Lines
+        </h2>
+        <div id="resultsContainer" class="space-y-6"></div>
+      </div>
+    </div>
+
+    <!-- Footer note -->
+    <div class="text-center text-slate-500 text-xs mt-8 space-y-1">
+      <p>Patterns: 4 days on / 5 days off • 9 rotating lines • Shift pattern: DDNN / DDAN / DDDD • Logic runs entirely in your browser</p>
+      <p>Your dates and settings are saved in this browser only. <button onclick="resetSavedState()" class="underline hover:text-emerald-700">Reset saved settings</button></p>
+    </div>
+  </div>
+
+  <script>
+    // ========== PATTERN DEFINITIONS ==========
+    const PATTERNS = {
+      1: 'DDDDOOOOO',
+      2: 'OODDDDOOO',
+      3: 'OOOODDDDO',
+      4: 'DOOOOODDD',
+      5: 'DDDOOOOOD',
+      6: 'ODDDDOOOO',
+      7: 'OOODDDDOO',
+      8: 'OOOOODDDD',
+      9: 'DDOOOOODD'
+    };
+
+    // Shift-type sub-patterns applied across each line's 4 consecutive on-days.
+    // Letters map in order onto the 1st, 2nd, 3rd and 4th "on" day of every on-block.
+    const SHIFT_PATTERNS = {
+      DDNN: ['D', 'D', 'N', 'N'],
+      DDAN: ['D', 'D', 'A', 'N'],
+      DDDD: ['D', 'D', 'D', 'D']
+    };
+
+    const SHIFT_META = {
+      D: { label: 'Day',       badge: 'bg-sky-50 border-sky-200 text-sky-700',         text: 'text-sky-600',    dot: 'bg-sky-100 border border-sky-300' },
+      A: { label: 'Afternoon', badge: 'bg-amber-50 border-amber-200 text-amber-700',   text: 'text-amber-600',  dot: 'bg-amber-100 border border-amber-300' },
+      N: { label: 'Night',     badge: 'bg-indigo-50 border-indigo-200 text-indigo-700',text: 'text-indigo-600', dot: 'bg-indigo-100 border border-indigo-300' },
+      O: { label: 'Off',       badge: 'bg-emerald-50 border-emerald-200 text-emerald-700', text: 'text-emerald-700', dot: 'bg-emerald-100 border border-emerald-300' }
+    };
+
+    const STORAGE_KEY = 'rosterLineRecommenderState_v1';
+
+    // ========== STATE ==========
+    let requiredDates = new Set(); // ISO strings YYYY-MM-DD
+    let dateStatusTimeout = null;
+
+    // ========== PERSISTENCE ==========
+    function saveState() {
+      try {
+        const allowedLines = [...document.querySelectorAll('#lineCheckboxes input[type=checkbox]:checked')].map(cb => cb.value);
+        const state = {
+          startDate: document.getElementById('startDate').value,
+          endDate: document.getElementById('endDate').value,
+          shiftPattern: document.getElementById('shiftPattern').value,
+          requiredDates: [...requiredDates],
+          allowedLines
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch (e) {
+        // localStorage unavailable (private browsing, restricted file:// origin, etc.) — fail silently.
+      }
+    }
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function resetSavedState() {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      requiredDates.clear();
+      document.getElementById('startDate').value = '2026-12-05';
+      document.getElementById('endDate').value = '2027-02-05';
+      document.getElementById('shiftPattern').value = 'DDNN';
+      document.querySelectorAll('#lineCheckboxes input[type=checkbox]').forEach(cb => cb.checked = true);
+      document.getElementById('resultsSection').classList.add('hidden');
+      renderSelectedDates();
+      showDateStatus('Saved settings cleared.', 'success');
+    }
+
+    // ========== INIT ==========
+    document.addEventListener('DOMContentLoaded', () => {
+      // Build line checkboxes
+      const container = document.getElementById('lineCheckboxes');
+      for (let i = 1; i <= 9; i++) {
+        const label = document.createElement('label');
+        label.className = 'inline-flex items-center gap-2 bg-white hover:border-emerald-300 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer transition select-none';
+        label.innerHTML = `
+          <input type="checkbox" value="${i}" checked class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500/40 bg-white">
+          <span class="text-sm font-medium text-slate-700">Line ${i}</span>
+        `;
+        label.querySelector('input').addEventListener('change', saveState);
+        container.appendChild(label);
+      }
+
+      // Persist config-field changes
+      ['startDate', 'endDate', 'shiftPattern'].forEach(id => {
+        document.getElementById(id).addEventListener('change', saveState);
+      });
+
+      // Restore saved state, if any
+      const saved = loadState();
+      if (saved) {
+        if (saved.startDate) document.getElementById('startDate').value = saved.startDate;
+        if (saved.endDate) document.getElementById('endDate').value = saved.endDate;
+        if (saved.shiftPattern) document.getElementById('shiftPattern').value = saved.shiftPattern;
+        if (Array.isArray(saved.requiredDates)) {
+          requiredDates = new Set(saved.requiredDates);
+        }
+        if (Array.isArray(saved.allowedLines)) {
+          const allowedSet = new Set(saved.allowedLines);
+          document.querySelectorAll('#lineCheckboxes input[type=checkbox]').forEach(cb => {
+            cb.checked = allowedSet.has(cb.value);
+          });
+        }
+        renderSelectedDates();
+      }
+    });
+
+    // ========== DATE HELPERS ==========
+    function parseDate(str) {
+      const [y, m, d] = str.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    }
+
+    function formatDate(d) {
+      // Build the ISO string from local date parts. toISOString() converts to
+      // UTC first, which silently rolls the date back a day for anyone east of
+      // UTC (e.g. Australia) — this was causing off-by-one-day bugs.
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function formatDisplay(d) {
+      return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    function daysBetween(start, end) {
+      return Math.round((end - start) / (1000 * 60 * 60 * 24));
+    }
+
+    // ========== STATUS MESSAGES ==========
+    function showDateStatus(msg, type) {
+      const el = document.getElementById('dateStatusMsg');
+      el.textContent = msg;
+      const base = 'text-xs mb-3 rounded-lg px-3 py-2 ';
+      el.className = base + (
+        type === 'warning'
+          ? 'bg-amber-50 text-amber-800 border border-amber-200'
+          : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+      );
+      el.classList.remove('hidden');
+      if (dateStatusTimeout) clearTimeout(dateStatusTimeout);
+      dateStatusTimeout = setTimeout(() => el.classList.add('hidden'), 4500);
+    }
+
+    // ========== ADD / REMOVE DATES ==========
+    function addSingleDate() {
+      const input = document.getElementById('singleDate');
+      if (!input.value) return;
+      if (requiredDates.has(input.value)) {
+        showDateStatus(`${formatDisplay(parseDate(input.value))} is already in your list.`, 'warning');
+        input.value = '';
+        return;
+      }
+      requiredDates.add(input.value);
+      const added = formatDisplay(parseDate(input.value));
+      input.value = '';
+      renderSelectedDates();
+      showDateStatus(`Added ${added}.`, 'success');
+    }
+
+    function addRange() {
+      const startVal = document.getElementById('rangeStart').value;
+      const endVal = document.getElementById('rangeEnd').value;
+      if (!startVal || !endVal) return;
+      let cur = parseDate(startVal);
+      const end = parseDate(endVal);
+      if (cur > end) {
+        showDateStatus('Range start must be before range end.', 'warning');
+        return;
+      }
+      let added = 0, alreadyPresent = 0;
+      while (cur <= end) {
+        const iso = formatDate(cur);
+        if (requiredDates.has(iso)) {
+          alreadyPresent++;
+        } else {
+          requiredDates.add(iso);
+          added++;
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+      document.getElementById('rangeStart').value = '';
+      document.getElementById('rangeEnd').value = '';
+      renderSelectedDates();
+      if (alreadyPresent > 0) {
+        showDateStatus(
+          `Added ${added} new date${added === 1 ? '' : 's'} (${alreadyPresent} day${alreadyPresent === 1 ? '' : 's'} in that range ${alreadyPresent === 1 ? 'was' : 'were'} already selected).`,
+          'warning'
+        );
+      } else {
+        showDateStatus(`Added ${added} date${added === 1 ? '' : 's'}.`, 'success');
+      }
+    }
+
+    function removeDate(iso) {
+      requiredDates.delete(iso);
+      renderSelectedDates();
+    }
+
+    function clearAllDates() {
+      requiredDates.clear();
+      renderSelectedDates();
+    }
+
+    function renderSelectedDates() {
+      const container = document.getElementById('selectedDates');
+      const emptyHint = document.getElementById('emptyHint');
+      // Clear existing pills (keep emptyHint)
+      [...container.querySelectorAll('.date-pill')].forEach(el => el.remove());
+
+      if (requiredDates.size === 0) {
+        emptyHint.classList.remove('hidden');
+        saveState();
+        return;
+      }
+      emptyHint.classList.add('hidden');
+
+      // Sort dates
+      const sorted = [...requiredDates].sort();
+      sorted.forEach(iso => {
+        const d = parseDate(iso);
+        const pill = document.createElement('span');
+        pill.className = 'date-pill inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg px-2.5 py-1 text-sm';
+        pill.innerHTML = `
+          ${formatDisplay(d)}
+          <button onclick="removeDate('${iso}')" class="text-emerald-500 hover:text-rose-600 ml-1 leading-none">&times;</button>
+        `;
+        container.appendChild(pill);
+      });
+
+      // Add clear-all if many
+      if (sorted.length > 2) {
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'date-pill text-xs text-slate-500 hover:text-rose-600 underline self-center ml-1';
+        clearBtn.textContent = 'Clear all';
+        clearBtn.onclick = clearAllDates;
+        container.appendChild(clearBtn);
+      }
+
+      saveState();
+    }
+
+    // ========== CORE LOGIC ==========
+    // Each line's 4-day on-block is a contiguous run in the *circular* 9-day
+    // cycle, but on 3 of the 9 lines that run wraps past the end of the fixed
+    // PATTERNS string back to its start (e.g. line 4 'DOOOOODDD' — the on-days
+    // are really positions 6,7,8,0 in that chronological order). This finds
+    // the true start of that run so shift letters are assigned in the correct
+    // order even when the block wraps.
+    function getBlockStart(line) {
+      const pattern = PATTERNS[line];
+      for (let i = 0; i < pattern.length; i++) {
+        if (pattern[i] === 'D' && pattern[(i + pattern.length - 1) % pattern.length] === 'O') {
+          return i;
+        }
+      }
+      return 0;
+    }
+
+    function getStatus(line, dayNum, shiftKey) {
+      const pattern = PATTERNS[line];
+      const pos = (dayNum - 1) % 9;
+      if (pattern[pos] !== 'D') return 'O';
+      const blockStart = getBlockStart(line);
+      const onIdx = (pos - blockStart + pattern.length) % pattern.length; // 0..3, chronological position within the on-block
+      const shiftLetters = SHIFT_PATTERNS[shiftKey] || SHIFT_PATTERNS.DDNN;
+      return shiftLetters[onIdx] || 'D';
+    }
+
+    // Total on-shifts (D/A/N) a line works across the whole roster period —
+    // used as a tie-breaker so, among equally-covering lines, the one that
+    // has you working less overall is preferred.
+    function countOnShifts(line, start, end, shiftKey) {
+      let count = 0;
+      let d = new Date(start);
+      let dayNum = 1;
+      while (d <= end) {
+        if (getStatus(line, dayNum, shiftKey) !== 'O') count++;
+        d.setDate(d.getDate() + 1);
+        dayNum++;
+      }
+      return count;
+    }
+
+    function generateRecommendations() {
+      const startStr = document.getElementById('startDate').value;
+      const endStr = document.getElementById('endDate').value;
+      if (!startStr || !endStr) {
+        alert('Please set both roster start and end dates.');
+        return;
+      }
+      if (requiredDates.size === 0) {
+        alert('Please add at least one required day off.');
+        return;
+      }
+
+      const start = parseDate(startStr);
+      const end = parseDate(endStr);
+      if (start > end) {
+        alert('Start date must be before end date.');
+        return;
+      }
+
+      // Which lines are allowed
+      const allowedLines = [];
+      document.querySelectorAll('#lineCheckboxes input[type=checkbox]:checked').forEach(cb => {
+        allowedLines.push(parseInt(cb.value));
+      });
+      if (allowedLines.length === 0) {
+        alert('Please select at least one line you are willing to accept.');
+        return;
+      }
+
+      const shiftKey = document.getElementById('shiftPattern').value;
+
+      // Build list of required day numbers (only those inside the roster period)
+      const requiredDayNums = [];
+      const requiredIsoInPeriod = [];
+      [...requiredDates].sort().forEach(iso => {
+        const d = parseDate(iso);
+        if (d >= start && d <= end) {
+          const dayNum = daysBetween(start, d) + 1;
+          requiredDayNums.push(dayNum);
+          requiredIsoInPeriod.push(iso);
+        }
+      });
+
+      if (requiredDayNums.length === 0) {
+        alert('None of the required days fall within the roster period.');
+        return;
+      }
+
+      // Score every allowed line
+      const scored = allowedLines.map(line => {
+        let covered = 0;
+        const details = []; // {iso, dayNum, status}
+        requiredDayNums.forEach((dayNum, idx) => {
+          const status = getStatus(line, dayNum, shiftKey);
+          const coveredThis = status === 'O';
+          if (coveredThis) covered++;
+          details.push({
+            iso: requiredIsoInPeriod[idx],
+            dayNum,
+            status,
+            covered: coveredThis
+          });
+        });
+        return {
+          line,
+          covered,
+          total: requiredDayNums.length,
+          score: covered / requiredDayNums.length,
+          totalOnShifts: countOnShifts(line, start, end, shiftKey),
+          details
+        };
+      });
+
+      // Sort: highest coverage first, then fewest total on-shifts in the
+      // period (less time working overall), then lower line number as a
+      // final, purely cosmetic tie-breaker.
+      scored.sort((a, b) => {
+        if (b.covered !== a.covered) return b.covered - a.covered;
+        if (a.totalOnShifts !== b.totalOnShifts) return a.totalOnShifts - b.totalOnShifts;
+        return a.line - b.line;
+      });
+
+      // Take top 3
+      const top3 = scored.slice(0, 3);
+      renderResults(top3, start, end, shiftKey);
+    }
+
+    // ========== RENDER RESULTS ==========
+    function renderResults(top3, start, end, shiftKey) {
+      const section = document.getElementById('resultsSection');
+      const container = document.getElementById('resultsContainer');
+      container.innerHTML = '';
+      section.classList.remove('hidden');
+
+      top3.forEach((item, rank) => {
+        const rankLabel = rank === 0 ? 'Best Match' : rank === 1 ? '2nd Best' : '3rd Best';
+        const rankColor = rank === 0 ? 'from-amber-400 to-amber-600' : rank === 1 ? 'from-slate-300 to-slate-400' : 'from-amber-700 to-amber-800';
+        const pct = Math.round(item.score * 100);
+
+        // Build missed / covered lists
+        const coveredList = item.details.filter(d => d.covered).map(d => formatDisplay(parseDate(d.iso)));
+        const missedList  = item.details.filter(d => !d.covered).map(d => `${formatDisplay(parseDate(d.iso))} — ${SHIFT_META[d.status].label} shift`);
+
+        // Mini timeline for the required period + a few days either side
+        const minDay = Math.min(...item.details.map(d => d.dayNum));
+        const maxDay = Math.max(...item.details.map(d => d.dayNum));
+        const viewStart = Math.max(1, minDay - 4);
+        const viewEnd   = maxDay + 4;
+
+        let timelineHtml = '';
+        for (let dn = viewStart; dn <= viewEnd; dn++) {
+          const status = getStatus(item.line, dn, shiftKey);
+          const isRequired = item.details.some(d => d.dayNum === dn);
+          const d = new Date(start);
+          d.setDate(d.getDate() + dn - 1);
+          const dayLabel = d.getDate();
+          const monthShort = d.toLocaleDateString('en-AU', { month: 'short' });
+
+          let classes = 'day-pill flex flex-col items-center justify-center rounded-lg py-1.5 text-xs font-medium border ';
+          if (status === 'O') {
+            classes += isRequired ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-emerald-50 border-emerald-200 text-emerald-700';
+          } else if (isRequired) {
+            classes += 'bg-rose-600 border-rose-500 text-white';
+          } else {
+            classes += SHIFT_META[status].badge;
+          }
+
+          timelineHtml += `
+            <div class="${classes}" title="${formatDisplay(d)} – ${SHIFT_META[status].label}">
+              <span class="opacity-70">${monthShort}</span>
+              <span class="text-sm font-semibold">${dayLabel}</span>
+              <span class="text-[10px] mt-0.5">${status}</span>
+            </div>`;
+        }
+
+        const card = document.createElement('div');
+        card.className = 'bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 fade-in shadow-sm';
+        card.innerHTML = `
+          <div class="flex flex-wrap items-start justify-between gap-4 mb-5">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-gradient-to-br ${rankColor} flex items-center justify-center text-white font-bold text-lg shadow">
+                ${rank + 1}
+              </div>
+              <div>
+                <div class="text-lg font-semibold text-slate-800">Line ${item.line}</div>
+                <div class="text-sm text-slate-500">${rankLabel}</div>
+              </div>
+            </div>
+            <div class="flex gap-5">
+              <div class="text-right">
+                <div class="text-2xl font-bold text-emerald-700">${item.covered}<span class="text-slate-400 text-lg">/${item.total}</span></div>
+                <div class="text-xs text-slate-500">days covered</div>
+              </div>
+              <div class="text-right border-l border-slate-200 pl-5">
+                <div class="text-2xl font-bold text-slate-700">${item.totalOnShifts}</div>
+                <div class="text-xs text-slate-500">on-shifts in period</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Score bar -->
+          <div class="mb-5">
+            <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div class="score-bar h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full" style="width: ${pct}%"></div>
+            </div>
+            <div class="text-right text-xs text-slate-500 mt-1">${pct}% match</div>
+          </div>
+
+          <!-- Covered / Missed -->
+          <div class="grid sm:grid-cols-2 gap-4 mb-5 text-sm">
+            <div>
+              <div class="text-emerald-600 font-medium mb-1.5"><i class="fas fa-check-circle mr-1"></i> Covered (${coveredList.length})</div>
+              <div class="text-slate-600 space-y-0.5">
+                ${coveredList.length ? coveredList.map(d => `<div>${d}</div>`).join('') : '<span class="text-slate-400">None</span>'}
+              </div>
+            </div>
+            <div>
+              <div class="text-rose-600 font-medium mb-1.5"><i class="fas fa-times-circle mr-1"></i> Still rostered on (${missedList.length})</div>
+              <div class="text-slate-600 space-y-0.5">
+                ${missedList.length ? missedList.map(d => `<div>${d}</div>`).join('') : '<span class="text-emerald-600/80">None — perfect!</span>'}
+              </div>
+            </div>
+          </div>
+
+          <!-- Mini timeline -->
+          <div>
+            <div class="text-xs font-medium text-slate-500 mb-2">Local view around requested days (green = required &amp; off, red = required but still working)</div>
+            <div class="flex flex-wrap gap-3 mb-2 text-[10px] text-slate-500">
+              <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.D.dot}"></span>Day</span>
+              <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.A.dot}"></span>Afternoon</span>
+              <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.N.dot}"></span>Night</span>
+              <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.O.dot}"></span>Off</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5 overflow-x-auto pb-1">
+              ${timelineHtml}
+            </div>
+          </div>
+
+          <!-- Expand full roster / print -->
+          <div class="mt-5 pt-4 border-t border-slate-200 flex flex-wrap items-center gap-x-6 gap-y-2">
+            <button onclick="toggleFullRoster(this, ${item.line}, '${formatDate(start)}', '${formatDate(end)}', '${shiftKey}')"
+                    class="text-sm text-emerald-700 hover:text-emerald-800 font-medium flex items-center gap-1.5">
+              <i class="fas fa-chevron-down transition-transform"></i>
+              Show full roster for Line ${item.line}
+            </button>
+            <button onclick="printRoster(${item.line}, '${formatDate(start)}', '${formatDate(end)}', '${shiftKey}')"
+                    class="text-sm text-slate-500 hover:text-emerald-700 font-medium flex items-center gap-1.5">
+              <i class="fas fa-print"></i>
+              Print / export roster
+            </button>
+            <div class="full-roster hidden mt-1 text-sm w-full"></div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+
+      // Scroll to results
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function toggleFullRoster(btn, line, startStr, endStr, shiftKey) {
+      const container = btn.parentElement.querySelector('.full-roster');
+      const icon = btn.querySelector('i');
+      if (!container.classList.contains('hidden')) {
+        container.classList.add('hidden');
+        icon.style.transform = '';
+        return;
+      }
+
+      // Generate full roster
+      const start = parseDate(startStr);
+      const end = parseDate(endStr);
+      let html = '<div class="bg-slate-50 border border-slate-200 rounded-xl p-4 max-h-80 overflow-y-auto font-mono text-xs leading-relaxed">';
+      let currentMonth = -1;
+      let row = '';
+
+      let d = new Date(start);
+      let dayNum = 1;
+      while (d <= end) {
+        const month = d.getMonth();
+        if (month !== currentMonth) {
+          if (row) html += row + '<br>';
+          html += `<div class="text-emerald-700 font-semibold mt-2 mb-1">${d.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })}</div>`;
+          currentMonth = month;
+          row = '';
+        }
+        const status = getStatus(line, dayNum, shiftKey);
+        const isReq = requiredDates.has(formatDate(d));
+        const cls = status === 'O'
+          ? (isReq ? 'text-emerald-700 font-bold' : 'text-slate-500')
+          : (isReq ? 'text-rose-600 font-bold' : SHIFT_META[status].text);
+        row += `<span class="${cls}" title="${formatDisplay(d)} – ${SHIFT_META[status].label}">${String(d.getDate()).padStart(2,' ')}${status}</span> `;
+        if (d.getDay() === 6) { // end of week visual break
+          row += '&nbsp;&nbsp;';
+        }
+        d.setDate(d.getDate() + 1);
+        dayNum++;
+      }
+      if (row) html += row;
+      html += '</div>';
+      html += '<p class="text-xs text-slate-500 mt-2">Legend: number = date, D = Day, A = Afternoon, N = Night, O = Off. Bold green = required &amp; off. Bold red = required but still working.</p>';
+
+      container.innerHTML = html;
+      container.classList.remove('hidden');
+      icon.style.transform = 'rotate(180deg)';
+    }
+
+    // ========== PRINT / EXPORT ==========
+    function printRoster(line, startStr, endStr, shiftKey) {
+      const start = parseDate(startStr);
+      const end = parseDate(endStr);
+      const rows = [];
+      let d = new Date(start);
+      let dayNum = 1;
+      while (d <= end) {
+        const status = getStatus(line, dayNum, shiftKey);
+        const iso = formatDate(d);
+        rows.push({
+          dateLabel: formatDisplay(d),
+          status,
+          statusLabel: SHIFT_META[status].label,
+          required: requiredDates.has(iso)
+        });
+        d.setDate(d.getDate() + 1);
+        dayNum++;
+      }
+
+      const rowsHtml = rows.map(r => `
+        <tr class="${r.required ? 'required' : ''}">
+          <td>${r.dateLabel}</td>
+          <td>${r.statusLabel} (${r.status})</td>
+          <td>${r.required ? 'Requested off' : ''}</td>
+        </tr>`).join('');
+
+      const win = window.open('', '_blank');
+      if (!win) {
+        alert('Please allow pop-ups for this page to print or export a roster.');
+        return;
+      }
+      win.document.write(`<!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Line ${line} Roster — ${formatDisplay(start)} to ${formatDisplay(end)}</title>
+          <style>
+            body { font-family: Arial, Helvetica, sans-serif; color:#1a1a1a; padding: 24px; }
+            h1 { font-size: 18px; margin: 0 0 2px 0; }
+            .meta { color:#555; font-size:12px; margin-bottom: 16px; }
+            table { border-collapse: collapse; width:100%; font-size: 12px; }
+            th, td { border:1px solid #ccc; padding:5px 10px; text-align:left; }
+            th { background:#eaf5ee; }
+            tr.required td { background:#e3f5ea; font-weight:600; }
+            .legend { margin-top:12px; font-size:11px; color:#555; }
+            @media print { body { padding: 0.5cm; } }
+          </style>
+        </head>
+        <body>
+          <h1>Line ${line} — Roster</h1>
+          <div class="meta">${formatDisplay(start)} to ${formatDisplay(end)} &bull; Shift pattern ${shiftKey} &bull; Generated ${formatDisplay(new Date())}</div>
+          <table>
+            <thead><tr><th>Date</th><th>Shift</th><th>Notes</th></tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+          <div class="legend">Highlighted rows are your requested days off. D = Day, A = Afternoon, N = Night, O = Off.</div>
+        </body>
+        </html>`);
+      win.document.close();
+      setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 400);
+    }
+  </script>
+</body>
+</html>
