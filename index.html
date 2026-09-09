@@ -161,7 +161,7 @@
     // Worker, not in this page — so someone who clones this HTML gets the
     // UI, not the logic. Set this to your deployed Worker's URL (see the
     // deployment notes delivered alongside this file).
-    const API_BASE = 'https://roster-tool.jarred-drew.workers.dev/';
+    const API_BASE = 'https://roster-tool.jarred-drew.workers.dev';
 
     async function callApi(path, body) {
       if (!API_BASE || API_BASE.includes('YOUR-WORKER-SUBDOMAIN')) {
