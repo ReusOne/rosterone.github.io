@@ -50,16 +50,26 @@
     <div class="bg-white/90 backdrop-blur border border-emerald-100 rounded-2xl shadow-xl shadow-emerald-950/5 overflow-hidden">
       <!-- Config Section -->
       <div class="p-6 sm:p-8 border-b border-emerald-100">
+        <!-- Roster Period -->
+        <div class="mb-6">
+          <label class="block text-sm font-medium text-slate-700 mb-1.5">Roster Period</label>
+          <select id="rosterPeriod"
+                  class="w-full sm:w-2/3 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition">
+            <!-- populated by JS: current + upcoming 9-week periods, plus "Custom dates" -->
+          </select>
+          <p class="text-xs text-slate-500 mt-1.5" id="rosterPeriodHint">Each published roster runs 9 weeks and rolls straight into the next one.</p>
+        </div>
+
         <div class="grid sm:grid-cols-3 gap-6 mb-6">
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1.5">Roster Start Date</label>
-            <input type="date" id="startDate" value="2026-12-05"
-                   class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition" />
+            <input type="date" id="startDate"
+                   class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed" />
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1.5">Roster End Date</label>
-            <input type="date" id="endDate" value="2027-02-05"
-                   class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition" />
+            <input type="date" id="endDate"
+                   class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed" />
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1.5">Roster Type</label>
@@ -92,7 +102,7 @@
         <div class="mb-6">
           <div class="flex items-center justify-between mb-3">
             <label class="text-sm font-medium text-slate-700">Required Days Off</label>
-            <span class="text-xs text-slate-500">Add any number of dates or ranges</span>
+            <span class="text-xs text-slate-500">Add any number of dates or ranges within the roster period above</span>
           </div>
 
           <!-- Quick Add Controls -->
@@ -152,6 +162,12 @@
     <div class="text-center text-slate-500 text-xs mt-8 space-y-1">
       <p>Standard: 4 on / 5 off — each of the 9 lines is its own fixed repeating 9-day cycle • Aero (Roadie): 9 lines rotate weekly, full rotation every 9 weeks</p>
       <p>Your dates and settings are saved in this browser only. <button onclick="resetSavedState()" class="underline hover:text-emerald-700">Reset saved settings</button></p>
+      <p>
+        <button id="revealEmailBtn" onclick="revealFeedbackEmail()" class="underline hover:text-emerald-700">
+          <i class="fas fa-envelope mr-1"></i>Got feedback? Show contact email
+        </button>
+        <span id="feedbackEmailContainer" class="hidden"></span>
+      </p>
     </div>
   </div>
 
@@ -161,7 +177,7 @@
     // Worker, not in this page — so someone who clones this HTML gets the
     // UI, not the logic. Set this to your deployed Worker's URL (see the
     // deployment notes delivered alongside this file).
-    const API_BASE = 'https://roster-tool.jarred-drew.workers.dev';
+    const API_BASE = 'https://YOUR-WORKER-SUBDOMAIN.workers.dev';
 
     async function callApi(path, body) {
       if (!API_BASE || API_BASE.includes('YOUR-WORKER-SUBDOMAIN')) {
@@ -202,6 +218,147 @@
 
     const ROSTER_TYPE_LABELS = { standard: 'Standard', aero: 'Aero (Roadie)' };
 
+    // ========== ROSTER PERIODS ==========
+    // The published roster runs in fixed 9-week (63-day) blocks that roll
+    // straight into the next one, e.g. 5 Dec 2026 – 5 Feb 2027, then
+    // 6 Feb 2027 – 9 Apr 2027, and so on indefinitely. ROSTER_PERIOD_ANCHOR
+    // is the start of one known period — every other period is just that
+    // date plus/minus a whole number of 63-day blocks, so the whole
+    // sequence (past or future) is derived from this one constant.
+    const ROSTER_PERIOD_ANCHOR = '2026-12-05';
+    const ROSTER_PERIOD_DAYS = 63; // 9 weeks
+    const ROSTER_PERIOD_FUTURE_COUNT = 4; // dropdown shows current + this many upcoming
+
+    function periodStartForIndex(idx) {
+      const d = parseDate(ROSTER_PERIOD_ANCHOR);
+      d.setDate(d.getDate() + idx * ROSTER_PERIOD_DAYS);
+      return d;
+    }
+
+    function periodEndForStart(startD) {
+      const d = new Date(startD);
+      d.setDate(d.getDate() + ROSTER_PERIOD_DAYS - 1);
+      return d;
+    }
+
+    // Which period index contains "today" (or, if today is before the
+    // anchor date, the first/soonest period) — recalculated live so the
+    // dropdown always stays current without needing future edits.
+    function currentRosterPeriodIndex() {
+      const anchor = parseDate(ROSTER_PERIOD_ANCHOR);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diffDays = Math.floor((today - anchor) / 86400000);
+      if (diffDays < 0) return 0;
+      return Math.floor(diffDays / ROSTER_PERIOD_DAYS);
+    }
+
+    function periodLabel(idx) {
+      const start = periodStartForIndex(idx);
+      const end = periodEndForStart(start);
+      const shortFmt = d => d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const isCurrent = today >= start && today <= end;
+      const tag = isCurrent ? ' — current' : (today < start && idx === currentRosterPeriodIndex() ? ' — next' : '');
+      return `${shortFmt(start)} – ${shortFmt(end)} (9 weeks)${tag}`;
+    }
+
+    function buildRosterPeriodOptions() {
+      const select = document.getElementById('rosterPeriod');
+      select.innerHTML = '';
+      const baseIdx = currentRosterPeriodIndex();
+      for (let i = baseIdx; i <= baseIdx + ROSTER_PERIOD_FUTURE_COUNT; i++) {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = periodLabel(i);
+        select.appendChild(opt);
+      }
+      const customOpt = document.createElement('option');
+      customOpt.value = 'custom';
+      customOpt.textContent = 'Custom dates…';
+      select.appendChild(customOpt);
+    }
+
+    // If saved start/end dates exactly match one of the currently-listed
+    // preset periods, return its index so we can select+lock that option
+    // instead of falling back to Custom.
+    function findMatchingPeriodIndex(startVal, endVal) {
+      const baseIdx = currentRosterPeriodIndex();
+      for (let i = baseIdx; i <= baseIdx + ROSTER_PERIOD_FUTURE_COUNT; i++) {
+        const start = periodStartForIndex(i);
+        const end = periodEndForStart(start);
+        if (formatDate(start) === startVal && formatDate(end) === endVal) return i;
+      }
+      return null;
+    }
+
+    function applyPeriodToDateFields(idx) {
+      const start = periodStartForIndex(idx);
+      const end = periodEndForStart(start);
+      document.getElementById('startDate').value = formatDate(start);
+      document.getElementById('endDate').value = formatDate(end);
+    }
+
+    function setDateFieldsLocked(locked) {
+      document.getElementById('startDate').disabled = locked;
+      document.getElementById('endDate').disabled = locked;
+      document.getElementById('rosterPeriodHint').textContent = locked
+        ? 'Locked to this roster period — choose "Custom dates" above to edit Start/End Date directly.'
+        : 'Custom dates — set Roster Start Date and Roster End Date directly below.';
+    }
+
+    function handleRosterPeriodChange() {
+      const val = document.getElementById('rosterPeriod').value;
+      if (val === 'custom') {
+        setDateFieldsLocked(false);
+      } else {
+        applyPeriodToDateFields(parseInt(val, 10));
+        setDateFieldsLocked(true);
+      }
+      syncRequiredDateBounds({ jumpDefault: true });
+      saveState();
+    }
+
+    // Keeps the Required Days Off date pickers constrained to whatever the
+    // current roster period is (preset or custom), jumps their calendar to
+    // open within that period, and drops any already-added required dates
+    // that now fall outside it.
+    function syncRequiredDateBounds(opts) {
+      opts = opts || {};
+      const startVal = document.getElementById('startDate').value;
+      const endVal = document.getElementById('endDate').value;
+
+      ['singleDate', 'rangeStart', 'rangeEnd'].forEach(id => {
+        const el = document.getElementById(id);
+        if (startVal) el.min = startVal; else el.removeAttribute('min');
+        if (endVal) el.max = endVal; else el.removeAttribute('max');
+      });
+
+      if (opts.jumpDefault && startVal) {
+        const singleEl = document.getElementById('singleDate');
+        if (!singleEl.value || singleEl.value < startVal || singleEl.value > endVal) {
+          singleEl.value = startVal;
+        }
+        const rangeStartEl = document.getElementById('rangeStart');
+        if (!rangeStartEl.value || rangeStartEl.value < startVal || rangeStartEl.value > endVal) {
+          rangeStartEl.value = startVal;
+        }
+      }
+
+      if (startVal && endVal && requiredDates.size > 0) {
+        const before = requiredDates.size;
+        [...requiredDates].forEach(iso => {
+          if (iso < startVal || iso > endVal) requiredDates.delete(iso);
+        });
+        const removed = before - requiredDates.size;
+        if (removed > 0) {
+          renderSelectedDates();
+          showDateStatus(`Removed ${removed} date${removed === 1 ? '' : 's'} that fell outside the new roster period.`, 'warning');
+        }
+      }
+    }
+
     function labelFor(status, onCall) {
       const label = SHIFT_META[status].label;
       return onCall ? `${label} (On Call)` : label;
@@ -218,6 +375,7 @@
       try {
         const allowedLines = [...document.querySelectorAll('#lineCheckboxes input[type=checkbox]:checked')].map(cb => cb.value);
         const state = {
+          rosterPeriod: document.getElementById('rosterPeriod').value,
           startDate: document.getElementById('startDate').value,
           endDate: document.getElementById('endDate').value,
           rosterType: document.getElementById('rosterType').value,
@@ -243,13 +401,17 @@
     function resetSavedState() {
       try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
       requiredDates.clear();
-      document.getElementById('startDate').value = '2026-12-05';
-      document.getElementById('endDate').value = '2027-02-05';
+      buildRosterPeriodOptions();
+      const defaultIdx = currentRosterPeriodIndex();
+      document.getElementById('rosterPeriod').value = String(defaultIdx);
+      applyPeriodToDateFields(defaultIdx);
+      setDateFieldsLocked(true);
       document.getElementById('rosterType').value = 'standard';
       document.getElementById('shiftPattern').value = 'DDNN';
       document.querySelectorAll('#lineCheckboxes input[type=checkbox]').forEach(cb => cb.checked = true);
       document.getElementById('resultsSection').classList.add('hidden');
       updateRosterTypeUI();
+      syncRequiredDateBounds({ jumpDefault: true });
       renderSelectedDates();
       showDateStatus('Saved settings cleared.', 'success');
     }
@@ -289,11 +451,20 @@
       });
       document.getElementById('rosterType').addEventListener('change', updateRosterTypeUI);
 
+      // Roster Period dropdown: build the current + upcoming preset options,
+      // then react to changes (locks/unlocks Start/End Date and keeps the
+      // Required Days Off pickers constrained to whatever period is active).
+      buildRosterPeriodOptions();
+      document.getElementById('rosterPeriod').addEventListener('change', handleRosterPeriodChange);
+      // In Custom mode, editing Start/End Date directly should also keep the
+      // Required Days Off bounds in sync.
+      document.getElementById('startDate').addEventListener('change', () => syncRequiredDateBounds({ jumpDefault: true }));
+      document.getElementById('endDate').addEventListener('change', () => syncRequiredDateBounds({ jumpDefault: false }));
+
       // Restore saved state, if any
       const saved = loadState();
+      let periodSelection = null; // resolved index (number) or 'custom'
       if (saved) {
-        if (saved.startDate) document.getElementById('startDate').value = saved.startDate;
-        if (saved.endDate) document.getElementById('endDate').value = saved.endDate;
         if (saved.rosterType) document.getElementById('rosterType').value = saved.rosterType;
         if (saved.shiftPattern) document.getElementById('shiftPattern').value = saved.shiftPattern;
         if (Array.isArray(saved.requiredDates)) {
@@ -305,8 +476,49 @@
             cb.checked = allowedSet.has(cb.value);
           });
         }
-        renderSelectedDates();
+
+        if (saved.rosterPeriod === 'custom' && saved.startDate && saved.endDate) {
+          periodSelection = 'custom';
+          document.getElementById('startDate').value = saved.startDate;
+          document.getElementById('endDate').value = saved.endDate;
+        } else if (saved.rosterPeriod !== undefined && saved.rosterPeriod !== null) {
+          const idx = parseInt(saved.rosterPeriod, 10);
+          if (!Number.isNaN(idx)) periodSelection = idx;
+        } else if (saved.startDate && saved.endDate) {
+          // Saved state predates the Roster Period selector — try to match
+          // it to a known preset, otherwise fall back to Custom so nothing
+          // the user had set gets silently discarded.
+          const matched = findMatchingPeriodIndex(saved.startDate, saved.endDate);
+          if (matched !== null) {
+            periodSelection = matched;
+          } else {
+            periodSelection = 'custom';
+            document.getElementById('startDate').value = saved.startDate;
+            document.getElementById('endDate').value = saved.endDate;
+          }
+        }
       }
+
+      if (periodSelection === null) {
+        periodSelection = currentRosterPeriodIndex();
+      }
+      if (periodSelection === 'custom') {
+        document.getElementById('rosterPeriod').value = 'custom';
+        setDateFieldsLocked(false);
+      } else {
+        // Make sure the option exists (older saved index could be out of the
+        // currently-listed window) before selecting it; otherwise fall back
+        // to the current period.
+        const select = document.getElementById('rosterPeriod');
+        const hasOption = [...select.options].some(o => o.value === String(periodSelection));
+        if (!hasOption) periodSelection = currentRosterPeriodIndex();
+        select.value = String(periodSelection);
+        applyPeriodToDateFields(periodSelection);
+        setDateFieldsLocked(true);
+      }
+      syncRequiredDateBounds({ jumpDefault: false });
+
+      if (saved) renderSelectedDates();
       updateRosterTypeUI();
     });
 
@@ -349,6 +561,12 @@
     function addSingleDate() {
       const input = document.getElementById('singleDate');
       if (!input.value) return;
+      const periodStart = document.getElementById('startDate').value;
+      const periodEnd = document.getElementById('endDate').value;
+      if (periodStart && periodEnd && (input.value < periodStart || input.value > periodEnd)) {
+        showDateStatus(`${formatDisplay(parseDate(input.value))} is outside the selected roster period.`, 'warning');
+        return;
+      }
       if (requiredDates.has(input.value)) {
         showDateStatus(`${formatDisplay(parseDate(input.value))} is already in your list.`, 'warning');
         input.value = '';
@@ -365,6 +583,12 @@
       const startVal = document.getElementById('rangeStart').value;
       const endVal = document.getElementById('rangeEnd').value;
       if (!startVal || !endVal) return;
+      const periodStart = document.getElementById('startDate').value;
+      const periodEnd = document.getElementById('endDate').value;
+      if (periodStart && periodEnd && (startVal < periodStart || endVal > periodEnd)) {
+        showDateStatus('That range falls outside the selected roster period.', 'warning');
+        return;
+      }
       let cur = parseDate(startVal);
       const end = parseDate(endVal);
       if (cur > end) {
@@ -778,6 +1002,24 @@
         </html>`);
       win.document.close();
       setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 400);
+    }
+
+    // ========== FEEDBACK EMAIL (click-to-reveal) ==========
+    // The address is assembled here, not written out anywhere in the page's
+    // HTML, so a bot scanning the page source for an "@" or a mailto: link
+    // won't find one — it only gets built once a real visitor clicks.
+    // This is basic scraper deterrence, not real security: anyone reading
+    // this script's own source can reconstruct it just as easily.
+    function revealFeedbackEmail() {
+      const user = ['h', 'e', 'l', 'l', 'o'].join('');
+      const domain = ['resusone', 'com', 'au'].join('.');
+      const address = user + '@' + domain;
+      const link = ['mail', 'to:'].join('') + address;
+
+      const container = document.getElementById('feedbackEmailContainer');
+      container.innerHTML = `<a href="${link}" class="underline hover:text-emerald-700">${address}</a>`;
+      container.classList.remove('hidden');
+      document.getElementById('revealEmailBtn').classList.add('hidden');
     }
   </script>
 
