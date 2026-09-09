@@ -38,7 +38,7 @@
           <i class="fas fa-calendar-check text-xl text-white"></i>
         </div>
         <h1 class="text-3xl sm:text-4xl font-bold tracking-tight bg-gradient-to-r from-emerald-700 to-teal-600 bg-clip-text text-transparent">
-          Roster Line Selection Tool
+          Roster Line Recommender
         </h1>
       </div>
       <p class="text-slate-600 max-w-2xl mx-auto text-sm sm:text-base">
@@ -84,7 +84,8 @@
           <p class="text-xs text-slate-500 mt-1.5">Applies to the 4 on-days of every line</p>
         </div>
         <p class="text-xs text-slate-500 mb-6 hidden" id="aeroHint">
-          Aero (Roadie) rotates through all 9 lines.
+          Aero (Roadie) rotates through all 9 lines, one week each, in numeric order (wrapping from 9 back to 1) — a full rotation takes 9 weeks, then repeats. Your chosen line is just where in that 9-week sequence you start. Each line's own weekly shift pattern is fixed (see full roster for details) — the Shift Pattern selector above doesn't apply.
+          Position 1 of each weekly cycle is whatever date you set as Roster Start Date — set it to an actual Saturday to match a real calendar week.
         </p>
 
         <!-- Required Days Off -->
@@ -130,10 +131,10 @@
         </div>
 
         <!-- Generate Button -->
-        <button onclick="generateRecommendations()"
-                class="w-full sm:w-auto bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold px-8 py-3 rounded-xl shadow-lg shadow-emerald-900/15 transition transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2">
+        <button id="generateBtn" onclick="generateRecommendations()"
+                class="w-full sm:w-auto bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold px-8 py-3 rounded-xl shadow-lg shadow-emerald-900/15 transition transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 disabled:hover:scale-100">
           <i class="fas fa-magic"></i>
-          Generate Top 3 Recommendations
+          <span id="generateBtnLabel">Generate Top 3 Recommendations</span>
         </button>
       </div>
 
@@ -149,58 +150,48 @@
 
     <!-- Footer note -->
     <div class="text-center text-slate-500 text-xs mt-8 space-y-1">
-      <p>Standard: 4 on / 5 off.</p>
+      <p>Standard: 4 on / 5 off — each of the 9 lines is its own fixed repeating 9-day cycle • Aero (Roadie): 9 lines rotate weekly, full rotation every 9 weeks</p>
       <p>Your dates and settings are saved in this browser only. <button onclick="resetSavedState()" class="underline hover:text-emerald-700">Reset saved settings</button></p>
     </div>
   </div>
 
   <script>
-    // ========== PATTERN DEFINITIONS ==========
-    // Standard: each line is a base O/D pattern over a 9-day cycle. The actual
-    // shift type of each "on" day comes from the Shift Pattern selector (SHIFT_PATTERNS).
-    const PATTERNS = {
-      1: 'DDDDOOOOO',
-      2: 'OODDDDOOO',
-      3: 'OOOODDDDO',
-      4: 'DOOOOODDD',
-      5: 'DDDOOOOOD',
-      6: 'ODDDDOOOO',
-      7: 'OOODDDDOO',
-      8: 'OOOOODDDD',
-      9: 'DDOOOOODD'
-    };
+    // ========== BACKEND API ==========
+    // All pattern data and scheduling math now live in a small backend
+    // Worker, not in this page — so someone who clones this HTML gets the
+    // UI, not the logic. Set this to your deployed Worker's URL (see the
+    // deployment notes delivered alongside this file).
+    const API_BASE = 'https://roster-tool.jarred-drew.workers.dev/';
 
-    // Shift-type sub-patterns applied across each Standard line's 4 consecutive
-    // on-days. Letters map in order onto the 1st, 2nd, 3rd and 4th "on" day.
-    const SHIFT_PATTERNS = {
-      DDNN: ['D', 'D', 'N', 'N'],
-      DDAN: ['D', 'D', 'A', 'N'],
-      DDDD: ['D', 'D', 'D', 'D']
-    };
+    async function callApi(path, body) {
+      if (!API_BASE || API_BASE.includes('YOUR-WORKER-SUBDOMAIN')) {
+        throw new Error('The recommendation service isn\'t configured yet — set API_BASE near the top of the script to your deployed Worker URL.');
+      }
+      let res;
+      try {
+        res = await fetch(API_BASE + path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      } catch (e) {
+        throw new Error('Could not reach the recommendation service. Check your connection and try again.');
+      }
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error('The recommendation service returned an unexpected response.');
+      }
+      if (!res.ok) {
+        throw new Error(data && data.error ? data.error : `Request failed (${res.status}).`);
+      }
+      return data;
+    }
 
-    // Aero (Roadie): each line's full 7-day week (Sat, Sun, Mon, Tue, Wed, Thu, Fri)
-    // is fixed and explicit — no shift-pattern overlay needed, unlike Standard.
-    const AERO_PATTERNS = {
-      1: ['D', 'A', 'N', 'N', 'O', 'O', 'O'],
-      2: ['O', 'O', 'D', 'D', 'N', 'N', 'O'],
-      3: ['O', 'O', 'O', 'O', 'D', 'D', 'N'],
-      4: ['N', 'O', 'O', 'O', 'O', 'O', 'D'],
-      5: ['A', 'N', 'N', 'O', 'O', 'O', 'O'],
-      6: ['O', 'D', 'D', 'N', 'N', 'O', 'O'],
-      7: ['O', 'O', 'O', 'D', 'D', 'N', 'N'],
-      8: ['O', 'O', 'O', 'O', 'O', 'D', 'D'],
-      9: ['O', 'O', 'T', 'T', 'T', 'O', 'O']
-    };
-    const AERO_DAY_LABELS = ['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-
-    // Aero cells that are the same hours as Afternoon but flagged "on call" —
-    // coded as 'A' everywhere (same coverage/color), with an "/OC" suffix shown
-    // in labels wherever this specific cell is displayed.
-    const AERO_ONCALL = {
-      1: new Set([1]), // Line 1, Sunday
-      5: new Set([0])  // Line 5, Saturday
-    };
-
+    // ========== PRESENTATION-ONLY DATA ==========
+    // Labels, colors and styling for each shift letter. Purely cosmetic —
+    // holds no scheduling logic, so it's fine for this to stay client-side.
     const SHIFT_META = {
       D: { label: 'Day',       badge: 'bg-sky-50 border-sky-200 text-sky-700',           text: 'text-sky-600',    dot: 'bg-sky-100 border border-sky-300' },
       A: { label: 'Afternoon', badge: 'bg-amber-50 border-amber-200 text-amber-700',     text: 'text-amber-600',  dot: 'bg-amber-100 border border-amber-300' },
@@ -209,12 +200,12 @@
       O: { label: 'Off',       badge: 'bg-emerald-50 border-emerald-200 text-emerald-700', text: 'text-emerald-700', dot: 'bg-emerald-100 border border-emerald-300' }
     };
 
-    // Rotation period (days) per roster type — how often the active line
-    // advances to the next line number (wrapping 9 -> 1).
-    const ROSTER_TYPES = {
-      standard: { rotationPeriod: 9, label: 'Standard' },
-      aero:     { rotationPeriod: 7, label: 'Aero (Roadie)' }
-    };
+    const ROSTER_TYPE_LABELS = { standard: 'Standard', aero: 'Aero (Roadie)' };
+
+    function labelFor(status, onCall) {
+      const label = SHIFT_META[status].label;
+      return onCall ? `${label} (On Call)` : label;
+    }
 
     const STORAGE_KEY = 'rosterLineRecommenderState_v2';
 
@@ -270,8 +261,8 @@
       document.getElementById('shiftPatternRow').classList.toggle('hidden', isAero);
       document.getElementById('aeroHint').classList.toggle('hidden', !isAero);
       document.getElementById('rosterTypeHint').textContent = isAero
-        ? 'Rotates through all 9 lines, one week each — full rotation takes 9 weeks'
-        : 'Rotates through all 9 lines';
+        ? 'Rotates through all 9 lines, one week each — full rotation takes 9 weeks, then repeats'
+        : 'Each line is a fixed, independently repeating 9-day cycle (no rotation between lines)';
       document.getElementById('linesLabel').textContent = isAero
         ? 'Starting lines you are willing to accept'
         : 'Lines you are willing to accept';
@@ -337,10 +328,6 @@
 
     function formatDisplay(d) {
       return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-    }
-
-    function daysBetween(start, end) {
-      return Math.round((end - start) / (1000 * 60 * 60 * 24));
     }
 
     // ========== STATUS MESSAGES ==========
@@ -456,91 +443,8 @@
       saveState();
     }
 
-    // ========== CORE LOGIC ==========
-    // "Line" is your STARTING line, not a schedule you stay on forever. Every
-    // rotation period (9 days for Standard, 7 for Aero) the active line
-    // advances by one, wrapping from 9 back to 1. This resolves which of the
-    // 9 lines' patterns is actually in effect on a given day of the roster,
-    // and where within that line's own cycle that day falls.
-    function resolveActiveLine(startLine, dayNum, rotationPeriod) {
-      const periodIndex = Math.floor((dayNum - 1) / rotationPeriod);
-      const activeLine = ((startLine - 1 + periodIndex) % 9) + 1;
-      const posInPeriod = ((dayNum - 1) % rotationPeriod) + 1; // 1-indexed
-      return { activeLine, posInPeriod };
-    }
-
-    // Each Standard line's 4-day on-block is a contiguous run in the
-    // *circular* 9-day cycle, but on 3 of the 9 lines that run wraps past the
-    // end of the fixed PATTERNS string back to its start (e.g. line 4
-    // 'DOOOOODDD' — the on-days are really positions 6,7,8,0 in that
-    // chronological order). This finds the true start of that run so shift
-    // letters are assigned in the correct order even when the block wraps.
-    function getBlockStart(line) {
-      const pattern = PATTERNS[line];
-      for (let i = 0; i < pattern.length; i++) {
-        if (pattern[i] === 'D' && pattern[(i + pattern.length - 1) % pattern.length] === 'O') {
-          return i;
-        }
-      }
-      return 0;
-    }
-
-    // Returns the shift letter (D/A/N/T/O) in effect for a given STARTING
-    // line on a given day number of the roster, honoring the line-rotation
-    // (see resolveActiveLine) and, for Standard, the shift-pattern overlay.
-    function getStatus(rosterType, startLine, dayNum, shiftKey) {
-      if (rosterType === 'aero') {
-        // Aero genuinely rotates: every week you advance to the next line
-        // number (wrapping 9 -> 1), so a full rotation takes 9 weeks, then
-        // the whole sequence repeats.
-        const { activeLine, posInPeriod } = resolveActiveLine(startLine, dayNum, 7);
-        return AERO_PATTERNS[activeLine][posInPeriod - 1];
-      }
-
-      // Standard: your line is fixed for the entire roster — each of the 9
-      // lines is simply its own independently repeating 9-day cycle. There
-      // is no rotation to a different line's pattern over time.
-      const pattern = PATTERNS[startLine];
-      const pos = (dayNum - 1) % 9;
-      if (pattern[pos] !== 'D') return 'O';
-      const blockStart = getBlockStart(startLine);
-      const onIdx = (pos - blockStart + pattern.length) % pattern.length; // 0..3
-      const shiftLetters = SHIFT_PATTERNS[shiftKey] || SHIFT_PATTERNS.DDNN;
-      return shiftLetters[onIdx] || 'D';
-    }
-
-    // True if the given day is one of the flagged Aero "on call" Afternoon cells.
-    function isOnCallDay(rosterType, startLine, dayNum) {
-      if (rosterType !== 'aero') return false;
-      const { activeLine, posInPeriod } = resolveActiveLine(startLine, dayNum, 7);
-      return !!(AERO_ONCALL[activeLine] && AERO_ONCALL[activeLine].has(posInPeriod - 1));
-    }
-
-    function shiftLabel(rosterType, startLine, dayNum, status) {
-      const label = SHIFT_META[status].label;
-      return isOnCallDay(rosterType, startLine, dayNum) ? `${label} (On Call)` : label;
-    }
-
-    function shiftCode(rosterType, startLine, dayNum, status) {
-      return isOnCallDay(rosterType, startLine, dayNum) ? `${status}/OC` : status;
-    }
-
-    // Total on-shifts (D/A/N/T) a starting line works across the whole roster
-    // period — used as a tie-breaker so, among equally-covering lines, the one
-    // that has you working less overall is preferred.
-    function countOnShifts(rosterType, startLine, start, end, shiftKey) {
-      let count = 0;
-      let d = new Date(start);
-      let dayNum = 1;
-      while (d <= end) {
-        if (getStatus(rosterType, startLine, dayNum, shiftKey) !== 'O') count++;
-        d.setDate(d.getDate() + 1);
-        dayNum++;
-      }
-      return count;
-    }
-
-    function generateRecommendations() {
+    // ========== GENERATE RECOMMENDATIONS (calls backend) ==========
+    async function generateRecommendations() {
       const startStr = document.getElementById('startDate').value;
       const endStr = document.getElementById('endDate').value;
       if (!startStr || !endStr) {
@@ -551,15 +455,11 @@
         alert('Please add at least one required day off.');
         return;
       }
-
-      const start = parseDate(startStr);
-      const end = parseDate(endStr);
-      if (start > end) {
+      if (parseDate(startStr) > parseDate(endStr)) {
         alert('Start date must be before end date.');
         return;
       }
 
-      // Which starting lines are allowed
       const allowedLines = [];
       document.querySelectorAll('#lineCheckboxes input[type=checkbox]:checked').forEach(cb => {
         allowedLines.push(parseInt(cb.value));
@@ -572,64 +472,34 @@
       const rosterType = document.getElementById('rosterType').value;
       const shiftKey = document.getElementById('shiftPattern').value;
 
-      // Build list of required day numbers (only those inside the roster period)
-      const requiredDayNums = [];
-      const requiredIsoInPeriod = [];
-      [...requiredDates].sort().forEach(iso => {
-        const d = parseDate(iso);
-        if (d >= start && d <= end) {
-          const dayNum = daysBetween(start, d) + 1;
-          requiredDayNums.push(dayNum);
-          requiredIsoInPeriod.push(iso);
-        }
-      });
+      const btn = document.getElementById('generateBtn');
+      const btnLabel = document.getElementById('generateBtnLabel');
+      const originalLabel = btnLabel.textContent;
+      btn.disabled = true;
+      btn.classList.add('opacity-70', 'cursor-wait');
+      btnLabel.textContent = 'Calculating…';
 
-      if (requiredDayNums.length === 0) {
-        alert('None of the required days fall within the roster period.');
-        return;
-      }
-
-      // Score every allowed starting line
-      const scored = allowedLines.map(line => {
-        let covered = 0;
-        const details = []; // {iso, dayNum, status}
-        requiredDayNums.forEach((dayNum, idx) => {
-          const status = getStatus(rosterType, line, dayNum, shiftKey);
-          const coveredThis = status === 'O';
-          if (coveredThis) covered++;
-          details.push({
-            iso: requiredIsoInPeriod[idx],
-            dayNum,
-            status,
-            covered: coveredThis
-          });
+      try {
+        const data = await callApi('/recommend', {
+          rosterType,
+          startDate: startStr,
+          endDate: endStr,
+          shiftPattern: shiftKey,
+          requiredDates: [...requiredDates],
+          allowedLines
         });
-        return {
-          line,
-          covered,
-          total: requiredDayNums.length,
-          score: covered / requiredDayNums.length,
-          totalOnShifts: countOnShifts(rosterType, line, start, end, shiftKey),
-          details
-        };
-      });
-
-      // Sort: highest coverage first, then fewest total on-shifts in the
-      // period (less time working overall), then lower line number as a
-      // final, purely cosmetic tie-breaker.
-      scored.sort((a, b) => {
-        if (b.covered !== a.covered) return b.covered - a.covered;
-        if (a.totalOnShifts !== b.totalOnShifts) return a.totalOnShifts - b.totalOnShifts;
-        return a.line - b.line;
-      });
-
-      // Take top 3
-      const top3 = scored.slice(0, 3);
-      renderResults(top3, start, end, rosterType, shiftKey);
+        renderResults(data.results, parseDate(startStr), rosterType, shiftKey);
+      } catch (e) {
+        alert(e.message || 'Something went wrong generating recommendations.');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('opacity-70', 'cursor-wait');
+        btnLabel.textContent = originalLabel;
+      }
     }
 
     // ========== RENDER RESULTS ==========
-    function renderResults(top3, start, end, rosterType, shiftKey) {
+    function renderResults(top3, start, rosterType, shiftKey) {
       const section = document.getElementById('resultsSection');
       const container = document.getElementById('resultsContainer');
       container.innerHTML = '';
@@ -642,47 +512,37 @@
         const rankColor = rank === 0 ? 'from-amber-400 to-amber-600' : rank === 1 ? 'from-slate-300 to-slate-400' : 'from-amber-700 to-amber-800';
         const pct = Math.round(item.score * 100);
 
-        // Build missed / covered lists
         const coveredList = item.details.filter(d => d.covered).map(d => formatDisplay(parseDate(d.iso)));
         const missedList  = item.details.filter(d => !d.covered).map(d =>
-          `${formatDisplay(parseDate(d.iso))} — ${shiftLabel(rosterType, item.line, d.dayNum, d.status)} shift`);
+          `${formatDisplay(parseDate(d.iso))} — ${labelFor(d.status, d.onCall)} shift`);
 
-        // Mini timeline for the required period + a few days either side
-        const minDay = Math.min(...item.details.map(d => d.dayNum));
-        const maxDay = Math.max(...item.details.map(d => d.dayNum));
-        const viewStart = Math.max(1, minDay - 4);
-        const viewEnd   = maxDay + 4;
-
+        // Mini timeline comes pre-built from the backend (a window around the requested days)
         let timelineHtml = '';
-        for (let dn = viewStart; dn <= viewEnd; dn++) {
-          const status = getStatus(rosterType, item.line, dn, shiftKey);
-          const isRequired = item.details.some(d => d.dayNum === dn);
-          const d = new Date(start);
-          d.setDate(d.getDate() + dn - 1);
+        item.timeline.forEach(t => {
+          const d = parseDate(t.iso);
           const dayLabel = d.getDate();
           const monthShort = d.toLocaleDateString('en-AU', { month: 'short' });
-          const code = shiftCode(rosterType, item.line, dn, status);
 
           let classes = 'day-pill flex flex-col items-center justify-center rounded-lg py-1.5 text-xs font-medium border ';
-          if (status === 'O') {
-            classes += isRequired ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-emerald-50 border-emerald-200 text-emerald-700';
-          } else if (isRequired) {
+          if (t.status === 'O') {
+            classes += t.isRequired ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-emerald-50 border-emerald-200 text-emerald-700';
+          } else if (t.isRequired) {
             classes += 'bg-rose-600 border-rose-500 text-white';
           } else {
-            classes += SHIFT_META[status].badge;
+            classes += SHIFT_META[t.status].badge;
           }
 
           timelineHtml += `
-            <div class="${classes}" title="${formatDisplay(d)} – ${shiftLabel(rosterType, item.line, dn, status)}">
+            <div class="${classes}" title="${formatDisplay(d)} – ${labelFor(t.status, t.onCall)}">
               <span class="opacity-70">${monthShort}</span>
               <span class="text-sm font-semibold">${dayLabel}</span>
-              <span class="text-[10px] mt-0.5">${code}</span>
+              <span class="text-[10px] mt-0.5">${t.code}</span>
             </div>`;
-        }
+        });
 
         const legendItems = [
           `<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.D.dot}"></span>Day</span>`,
-          `<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.A.dot}"></span>Afternoon${rosterType === 'aero' ? ' / OC' : ''}</span>`,
+          `<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.A.dot}"></span>Afternoon${isAero ? ' / OC' : ''}</span>`,
           `<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.N.dot}"></span>Night</span>`,
           isAero ? `<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.T.dot}"></span>Training</span>` : '',
           `<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm ${SHIFT_META.O.dot}"></span>Off</span>`
@@ -750,15 +610,15 @@
 
           <!-- Expand full roster / print -->
           <div class="mt-5 pt-4 border-t border-slate-200 flex flex-wrap items-center gap-x-6 gap-y-2">
-            <button onclick="toggleFullRoster(this, ${item.line}, '${formatDate(start)}', '${formatDate(end)}', '${rosterType}', '${shiftKey}')"
+            <button onclick="toggleFullRoster(this, ${item.line}, '${formatDate(start)}', '${document.getElementById('endDate').value}', '${rosterType}', '${shiftKey}')"
                     class="text-sm text-emerald-700 hover:text-emerald-800 font-medium flex items-center gap-1.5">
               <i class="fas fa-chevron-down transition-transform"></i>
-              Show full roster ${isAero ? 'starting ' : 'for '}Line ${item.line}
+              <span class="full-roster-btn-label">Show full roster ${isAero ? 'starting ' : 'for '}Line ${item.line}</span>
             </button>
-            <button onclick="printRoster(${item.line}, '${formatDate(start)}', '${formatDate(end)}', '${rosterType}', '${shiftKey}')"
+            <button onclick="printRoster(this, ${item.line}, '${formatDate(start)}', '${document.getElementById('endDate').value}', '${rosterType}', '${shiftKey}')"
                     class="text-sm text-slate-500 hover:text-emerald-700 font-medium flex items-center gap-1.5">
               <i class="fas fa-print"></i>
-              Print / export roster
+              <span class="print-btn-label">Print / export roster</span>
             </button>
             <div class="full-roster hidden mt-1 text-sm w-full"></div>
           </div>
@@ -770,7 +630,8 @@
       section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function toggleFullRoster(btn, startLine, startStr, endStr, rosterType, shiftKey) {
+    // ========== FULL ROSTER (calls backend) ==========
+    async function toggleFullRoster(btn, startLine, startStr, endStr, rosterType, shiftKey) {
       const container = btn.parentElement.querySelector('.full-roster');
       const icon = btn.querySelector('i');
       if (!container.classList.contains('hidden')) {
@@ -779,18 +640,33 @@
         return;
       }
 
-      // Generate full roster
+      const labelEl = btn.querySelector('.full-roster-btn-label');
+      const originalLabel = labelEl.textContent;
+      btn.disabled = true;
+      labelEl.textContent = 'Loading…';
+
+      let data;
+      try {
+        data = await callApi('/roster', {
+          rosterType, startLine, startDate: startStr, endDate: endStr, shiftPattern: shiftKey
+        });
+      } catch (e) {
+        alert(e.message || 'Could not load the full roster.');
+        btn.disabled = false;
+        labelEl.textContent = originalLabel;
+        return;
+      }
+      btn.disabled = false;
+      labelEl.textContent = originalLabel;
+
       const isAero = rosterType === 'aero';
-      const start = parseDate(startStr);
-      const end = parseDate(endStr);
       let html = '<div class="bg-slate-50 border border-slate-200 rounded-xl p-4 max-h-80 overflow-y-auto font-mono text-xs leading-relaxed">';
       let currentMonth = -1;
       let row = '';
       let lastActiveLine = null;
 
-      let d = new Date(start);
-      let dayNum = 1;
-      while (d <= end) {
+      data.days.forEach(day => {
+        const d = parseDate(day.iso);
         const month = d.getMonth();
         if (month !== currentMonth) {
           if (row) html += row + '<br>';
@@ -798,33 +674,26 @@
           currentMonth = month;
           row = '';
         }
-        if (isAero) {
-          const { activeLine } = resolveActiveLine(startLine, dayNum, 7);
-          if (activeLine !== lastActiveLine) {
-            if (row) { html += row + '<br>'; row = ''; }
-            html += `<div class="text-slate-400 text-[11px] italic">— now on Line ${activeLine} (from ${formatDisplay(d)}) —</div>`;
-            lastActiveLine = activeLine;
-          }
+        if (isAero && day.activeLine !== lastActiveLine) {
+          if (row) { html += row + '<br>'; row = ''; }
+          html += `<div class="text-slate-400 text-[11px] italic">— now on Line ${day.activeLine} (from ${formatDisplay(d)}) —</div>`;
+          lastActiveLine = day.activeLine;
         }
-        const status = getStatus(rosterType, startLine, dayNum, shiftKey);
-        const code = shiftCode(rosterType, startLine, dayNum, status);
-        const isReq = requiredDates.has(formatDate(d));
-        const cls = status === 'O'
+        const isReq = requiredDates.has(day.iso);
+        const cls = day.status === 'O'
           ? (isReq ? 'text-emerald-700 font-bold' : 'text-slate-500')
-          : (isReq ? 'text-rose-600 font-bold' : SHIFT_META[status].text);
-        row += `<span class="${cls}" title="${formatDisplay(d)} – ${shiftLabel(rosterType, startLine, dayNum, status)}">${String(d.getDate()).padStart(2,' ')}${code}</span> `;
+          : (isReq ? 'text-rose-600 font-bold' : SHIFT_META[day.status].text);
+        row += `<span class="${cls}" title="${formatDisplay(d)} – ${labelFor(day.status, day.onCall)}">${String(d.getDate()).padStart(2,' ')}${day.code}</span> `;
         if (d.getDay() === 6) { // end of week visual break
           row += '&nbsp;&nbsp;';
         }
-        d.setDate(d.getDate() + 1);
-        dayNum++;
-      }
+      });
       if (row) html += row;
       html += '</div>';
       const legendLetters = isAero
         ? 'D = Day, A = Afternoon (/OC = on call), N = Night, T = Training, O = Off.'
         : 'D = Day, A = Afternoon, N = Night, O = Off.';
-      const rotationNote = isAero ? ' "Line N —" marks each weekly rotation to the next line (the full 9-line sequence repeats every 9 weeks).' : '';
+      const rotationNote = isAero ? ' "— now on Line N —" marks each weekly rotation to the next line (the full 9-line sequence repeats every 9 weeks).' : '';
       html += `<p class="text-xs text-slate-500 mt-2">Legend: number = date, ${legendLetters} Bold green = required &amp; off. Bold red = required but still working.${rotationNote}</p>`;
 
       container.innerHTML = html;
@@ -832,36 +701,42 @@
       icon.style.transform = 'rotate(180deg)';
     }
 
-    // ========== PRINT / EXPORT ==========
-    function printRoster(startLine, startStr, endStr, rosterType, shiftKey) {
+    // ========== PRINT / EXPORT (calls backend) ==========
+    async function printRoster(btn, startLine, startStr, endStr, rosterType, shiftKey) {
+      const labelEl = btn ? btn.querySelector('.print-btn-label') : null;
+      const originalLabel = labelEl ? labelEl.textContent : null;
+      if (btn) btn.disabled = true;
+      if (labelEl) labelEl.textContent = 'Preparing…';
+
+      let data;
+      try {
+        data = await callApi('/roster', {
+          rosterType, startLine, startDate: startStr, endDate: endStr, shiftPattern: shiftKey
+        });
+      } catch (e) {
+        alert(e.message || 'Could not prepare the roster for printing.');
+        if (btn) btn.disabled = false;
+        if (labelEl) labelEl.textContent = originalLabel;
+        return;
+      }
+      if (btn) btn.disabled = false;
+      if (labelEl) labelEl.textContent = originalLabel;
+
       const isAero = rosterType === 'aero';
       const start = parseDate(startStr);
       const end = parseDate(endStr);
-      const rows = [];
-      let d = new Date(start);
-      let dayNum = 1;
-      while (d <= end) {
-        const status = getStatus(rosterType, startLine, dayNum, shiftKey);
-        const activeLine = isAero ? resolveActiveLine(startLine, dayNum, 7).activeLine : startLine;
-        const iso = formatDate(d);
-        rows.push({
-          dateLabel: formatDisplay(d),
-          activeLine,
-          statusLabel: shiftLabel(rosterType, startLine, dayNum, status),
-          code: shiftCode(rosterType, startLine, dayNum, status),
-          required: requiredDates.has(iso)
-        });
-        d.setDate(d.getDate() + 1);
-        dayNum++;
-      }
 
-      const rowsHtml = rows.map(r => `
-        <tr class="${r.required ? 'required' : ''}">
-          <td>${r.dateLabel}</td>
-          ${isAero ? `<td>Line ${r.activeLine}</td>` : ''}
-          <td>${r.statusLabel} (${r.code})</td>
-          <td>${r.required ? 'Requested off' : ''}</td>
-        </tr>`).join('');
+      const rowsHtml = data.days.map(day => {
+        const d = parseDate(day.iso);
+        const required = requiredDates.has(day.iso);
+        return `
+        <tr class="${required ? 'required' : ''}">
+          <td>${formatDisplay(d)}</td>
+          ${isAero ? `<td>Line ${day.activeLine}</td>` : ''}
+          <td>${labelFor(day.status, day.onCall)} (${day.code})</td>
+          <td>${required ? 'Requested off' : ''}</td>
+        </tr>`;
+      }).join('');
 
       const win = window.open('', '_blank');
       if (!win) {
@@ -893,7 +768,7 @@
         </head>
         <body>
           <h1>${isAero ? 'Starting ' : ''}Line ${startLine} — Roster</h1>
-          <div class="meta">${formatDisplay(start)} to ${formatDisplay(end)} &bull; ${ROSTER_TYPES[rosterType].label}${!isAero ? ' &bull; Shift pattern ' + shiftKey : ''} &bull; Generated ${formatDisplay(new Date())}</div>
+          <div class="meta">${formatDisplay(start)} to ${formatDisplay(end)} &bull; ${data.rosterTypeLabel || ROSTER_TYPE_LABELS[rosterType]}${!isAero ? ' &bull; Shift pattern ' + shiftKey : ''} &bull; Generated ${formatDisplay(new Date())}</div>
           <table>
             <thead><tr><th>Date</th>${isAero ? '<th>Active Line</th>' : ''}<th>Shift</th><th>Notes</th></tr></thead>
             <tbody>${rowsHtml}</tbody>
@@ -905,5 +780,6 @@
       setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 400);
     }
   </script>
+
 </body>
 </html>
