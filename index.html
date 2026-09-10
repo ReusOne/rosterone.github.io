@@ -183,10 +183,9 @@
 
   <script>
     // ========== BACKEND API ==========
-    // All pattern data and scheduling math now live in a small backend
-    // Worker, not in this page — so someone who clones this HTML gets the
-    // UI, not the logic. Set this to your deployed Worker's URL (see the
-    // deployment notes delivered alongside this file).
+    // All pattern data and scheduling math live at the backend
+    // If you wish to clone the UI or Mechanics please touch base with us email below. 
+    // Always happy to work on other projects. (C) ResusOne 
     const API_BASE = 'https://roster-tool.jarred-drew.workers.dev';
 
     async function callApi(path, body) {
@@ -854,6 +853,11 @@
               <i class="fas fa-print"></i>
               <span class="print-btn-label">Print / export roster</span>
             </button>
+            <button onclick="downloadRosterCalendar(this, ${item.line}, '${formatDate(start)}', '${document.getElementById('endDate').value}', '${rosterType}', '${shiftKey}')"
+                    class="text-sm text-slate-500 hover:text-emerald-700 font-medium flex items-center gap-1.5">
+              <i class="fas fa-calendar-plus"></i>
+              <span class="ics-btn-label">Add to Calendar</span>
+            </button>
             <div class="full-roster hidden mt-1 text-sm w-full"></div>
           </div>
         `;
@@ -934,8 +938,6 @@
       container.classList.remove('hidden');
       icon.style.transform = 'rotate(180deg)';
     }
-
-    // ========== PRINT / EXPORT (calls backend) ==========
         // ========== PRINT / EXPORT (calendar view, calls backend) ==========
         // Which weekday starts each calendar row — matches JavaScript's
     // Date.getDay() numbering (0 = Sunday, 1 = Monday, ... 6 = Saturday).
@@ -1096,7 +1098,113 @@
       win.document.close();
       setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 400);
     }
+    // ========== ADD TO CALENDAR (.ics export) ==========
+    // Real shift hours per letter, so each calendar event shows up as an
+    // actual timed block rather than a vague all-day marker. A/N cross
+    // midnight, so their end time lands on the following day.
+    const SHIFT_HOURS = {
+      D: { startH: 7,  startM: 30, endH: 19, endM: 30, endNextDay: false },
+      A: { startH: 12, startM: 0,  endH: 0,  endM: 0,  endNextDay: true  },
+      N: { startH: 19, startM: 30, endH: 7,  endM: 30, endNextDay: true  },
+      T: { startH: 7,  startM: 30, endH: 19, endM: 30, endNextDay: false }
+    };
 
+    function icsLocalDateTime(d, hour, minute) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hh = String(hour).padStart(2, '0');
+      const mm = String(minute).padStart(2, '0');
+      return `${y}${m}${day}T${hh}${mm}00`; // floating local time — no Z/TZID
+    }
+
+    function icsEscape(text) {
+      return String(text).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+    }
+
+    // RFC 5545 line folding: no line may exceed 75 octets.
+    function icsFold(line) {
+      if (line.length <= 75) return line;
+      let out = line.slice(0, 75);
+      let rest = line.slice(75);
+      while (rest.length > 0) {
+        out += '\r\n ' + rest.slice(0, 74);
+        rest = rest.slice(74);
+      }
+      return out;
+    }
+    // Builds the .ics text. Only exports days that are actually rostered.
+    // days off simply stay free/blank on the calendar.
+    function buildRosterIcs(days, startLine, rosterType, requiredDatesSet) {
+      const now = new Date();
+      const dtStamp = now.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ResusOne//Roster Line Recommender//EN', 'CALSCALE:GREGORIAN'];
+
+      days.forEach(day => {
+        if (day.status === 'O') return;
+        const hours = SHIFT_HOURS[day.status];
+        if (!hours) return;
+
+        const d = parseDate(day.iso);
+        const dtStart = icsLocalDateTime(d, hours.startH, hours.startM);
+        const endDate = hours.endNextDay ? new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1) : d;
+        const dtEnd = icsLocalDateTime(endDate, hours.endH, hours.endM);
+
+        const label = labelFor(day.status, day.onCall);
+        const summary = rosterType === 'aero' ? `${label} — Line ${day.activeLine}` : `${label} — Line ${startLine}`;
+        const uid = `roster-${rosterType}-${startLine}-${day.iso}@resusone.com.au`;
+
+        lines.push('BEGIN:VEVENT');
+        lines.push(icsFold(`UID:${uid}`));
+        lines.push(`DTSTAMP:${dtStamp}`);
+        lines.push(`DTSTART:${dtStart}`);
+        lines.push(`DTEND:${dtEnd}`);
+        lines.push(icsFold(`SUMMARY:${icsEscape(summary)}`));
+        if (requiredDatesSet.has(day.iso)) {
+          lines.push(icsFold('DESCRIPTION:This was one of your requested days off — you are still rostered on.'));
+        }
+        lines.push('END:VEVENT');
+      });
+
+      lines.push('END:VCALENDAR');
+      return lines.join('\r\n');
+    }
+
+    function triggerIcsDownload(filename, icsText) {
+      const blob = new Blob([icsText], { type: 'text/calendar;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function downloadRosterCalendar(btn, startLine, startStr, endStr, rosterType, shiftKey) {
+      const labelEl = btn ? btn.querySelector('.ics-btn-label') : null;
+      const originalLabel = labelEl ? labelEl.textContent : null;
+      if (btn) btn.disabled = true;
+      if (labelEl) labelEl.textContent = 'Preparing…';
+
+      let data;
+      try {
+        data = await callApi('/roster', {
+          rosterType, startLine, startDate: startStr, endDate: endStr, shiftPattern: shiftKey
+        });
+      } catch (e) {
+        alert(e.message || 'Could not prepare the calendar file.');
+        if (btn) btn.disabled = false;
+        if (labelEl) labelEl.textContent = originalLabel;
+        return;
+      }
+      if (btn) btn.disabled = false;
+      if (labelEl) labelEl.textContent = originalLabel;
+
+      const ics = buildRosterIcs(data.days, startLine, rosterType, requiredDates);
+      triggerIcsDownload(`line-${startLine}-roster-${startStr}-to-${endStr}.ics`, ics);
+    }
     // ========== FEEDBACK EMAIL (click-to-reveal) ==========
     // The address is assembled here, not written out anywhere in the page's
     // HTML, so a bot scanning the page source for an "@" or a mailto: link
