@@ -936,6 +936,76 @@
     }
 
     // ========== PRINT / EXPORT (calls backend) ==========
+        // ========== PRINT / EXPORT (calendar view, calls backend) ==========
+        // Which weekday starts each calendar row — matches JavaScript's
+    // Date.getDay() numbering (0 = Sunday, 1 = Monday, ... 6 = Saturday).
+    // The roster always starts on a Saturday, so this is set to 6; change
+    // it to 1 for Monday-first or 0 for Sunday-first if that ever changes.
+    const PRINT_CALENDAR_WEEK_START = 6;
+    const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    function buildMonthCalendarHtml(monthDate, monthDays, requiredDatesSet) {
+      const year = monthDate.getFullYear();
+      const month = monthDate.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const firstWeekday = new Date(year, month, 1).getDay(); // 0 = Sunday
+      const leadingBlanks = (firstWeekday - PRINT_CALENDAR_WEEK_START + 7) % 7;
+      const dayNames = WEEKDAY_NAMES.slice(PRINT_CALENDAR_WEEK_START).concat(WEEKDAY_NAMES.slice(0, PRINT_CALENDAR_WEEK_START));
+
+      const dayMap = {};
+      monthDays.forEach(d => { dayMap[parseDate(d.iso).getDate()] = d; });
+
+      let cellsHtml = '';
+      for (let i = 0; i < leadingBlanks; i++) cellsHtml += '<div class="cal-cell cal-blank"></div>';
+      for (let dnum = 1; dnum <= daysInMonth; dnum++) {
+        const info = dayMap[dnum];
+        if (!info) { cellsHtml += '<div class="cal-cell cal-blank"></div>'; continue; }
+        const required = requiredDatesSet.has(info.iso);
+        let cls = 'cal-cell';
+        if (info.status === 'O') cls += required ? ' cal-req-off' : ' cal-off';
+        else cls += required ? ' cal-req-work' : ' cal-work-' + info.status.toLowerCase();
+        cellsHtml += `<div class="${cls}" title="${labelFor(info.status, info.onCall)}"><div class="cal-daynum">${dnum}</div><div class="cal-code">${info.code}</div></div>`;
+      }
+      const totalCells = leadingBlanks + daysInMonth;
+      const trailingBlanks = (7 - (totalCells % 7)) % 7;
+      for (let i = 0; i < trailingBlanks; i++) cellsHtml += '<div class="cal-cell cal-blank"></div>';
+
+      const monthLabel = monthDate.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+      return `
+        <div class="cal-month">
+          <div class="cal-month-title">${monthLabel}</div>
+          <div class="cal-grid cal-head">${dayNames.map(n => `<div class="cal-headcell">${n}</div>`).join('')}</div>
+          <div class="cal-grid">${cellsHtml}</div>
+        </div>`;
+    }
+
+    // For Aero: a compact style list of which
+    // line is active when, since that can't fit legibly inside day cells.
+    function buildActiveLineLegend(days) {
+      const segments = [];
+      let currentLine = null, segStart = null, prevIso = null;
+      days.forEach(day => {
+        if (day.activeLine !== currentLine) {
+          if (currentLine !== null) segments.push({ line: currentLine, start: segStart, end: prevIso });
+          currentLine = day.activeLine;
+          segStart = day.iso;
+        }
+        prevIso = day.iso;
+      });
+      if (currentLine !== null) segments.push({ line: currentLine, start: segStart, end: prevIso });
+
+      const rows = segments.map(seg => `
+        <tr>
+          <td>Line ${seg.line}</td>
+          <td>${formatDisplay(parseDate(seg.start))} – ${formatDisplay(parseDate(seg.end))}</td>
+        </tr>`).join('');
+      return `
+        <div class="line-legend">
+          <div class="line-legend-title">Active line by date (rotates weekly)</div>
+          <table>${rows}</table>
+        </div>`;
+    }
+
     async function printRoster(btn, startLine, startStr, endStr, rosterType, shiftKey) {
       const labelEl = btn ? btn.querySelector('.print-btn-label') : null;
       const originalLabel = labelEl ? labelEl.textContent : null;
@@ -960,17 +1030,20 @@
       const start = parseDate(startStr);
       const end = parseDate(endStr);
 
-      const rowsHtml = data.days.map(day => {
+      // Group the returned days by calendar month so we can render one
+      // month-grid per month spanned by the roster period (usually 3 for a
+      // 9-week period).
+      const monthsMap = new Map();
+      data.days.forEach(day => {
         const d = parseDate(day.iso);
-        const required = requiredDates.has(day.iso);
-        return `
-        <tr class="${required ? 'required' : ''}">
-          <td>${formatDisplay(d)}</td>
-          ${isAero ? `<td>Line ${day.activeLine}</td>` : ''}
-          <td>${labelFor(day.status, day.onCall)} (${day.code})</td>
-          <td>${required ? 'Requested off' : ''}</td>
-        </tr>`;
-      }).join('');
+        const key = `${d.getFullYear()}-${d.getMonth()}`;
+        if (!monthsMap.has(key)) monthsMap.set(key, { monthDate: new Date(d.getFullYear(), d.getMonth(), 1), days: [] });
+        monthsMap.get(key).days.push(day);
+      });
+      const calendarHtml = [...monthsMap.values()]
+        .sort((a, b) => a.monthDate - b.monthDate)
+        .map(m => buildMonthCalendarHtml(m.monthDate, m.days, requiredDates))
+        .join('');
 
       const win = window.open('', '_blank');
       if (!win) {
@@ -980,9 +1053,6 @@
       const legendLetters = isAero
         ? 'D = Day, A = Afternoon (/OC = on call), N = Night, T = Training, O = Off.'
         : 'D = Day, A = Afternoon, N = Night, O = Off.';
-      const activeLineNote = isAero
-        ? ' The Active Line column shows which of the 9 lines is in effect that day as you rotate weekly through them (a full rotation takes 9 weeks).'
-        : '';
       win.document.write(`<!DOCTYPE html>
         <html>
         <head>
@@ -992,22 +1062,35 @@
             body { font-family: Arial, Helvetica, sans-serif; color:#1a1a1a; padding: 24px; }
             h1 { font-size: 18px; margin: 0 0 2px 0; }
             .meta { color:#555; font-size:12px; margin-bottom: 16px; }
-            table { border-collapse: collapse; width:100%; font-size: 12px; }
-            th, td { border:1px solid #ccc; padding:5px 10px; text-align:left; }
-            th { background:#eaf5ee; }
-            tr.required td { background:#e3f5ea; font-weight:600; }
-            .legend { margin-top:12px; font-size:11px; color:#555; }
+            .cal-month { margin-bottom: 20px; page-break-inside: avoid; }
+            .cal-month-title { font-size: 14px; font-weight: 700; color:#0f6b4c; margin-bottom: 6px; }
+            .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+            .cal-head .cal-headcell { font-size: 10px; font-weight: 600; text-align: center; color: #666; padding-bottom: 2px; }
+            .cal-cell { border: 1px solid #ccc; min-height: 44px; padding: 3px 4px; font-size: 11px; border-radius: 3px; }
+            .cal-blank { border-color: transparent; }
+            .cal-daynum { font-weight: 600; font-size: 10px; color: #555; }
+            .cal-code { font-weight: 700; font-size: 12px; margin-top: 2px; }
+            .cal-off { background: #f4faf7; }
+            .cal-req-off { background: #c9ecd9; border-color: #0f6b4c; font-weight: 700; }
+            .cal-req-work { background: #fbd5d5; border-color: #c0392b; font-weight: 700; }
+            .cal-work-d { background: #eaf3fb; }
+            .cal-work-a { background: #fdf3e0; }
+            .cal-work-n { background: #eceafb; }
+            .cal-work-t { background: #f2f8e0; }
+            .legend { margin-top: 12px; font-size: 11px; color: #555; }
+            .line-legend { margin-top: 16px; font-size: 11px; color: #333; }
+            .line-legend-title { font-weight: 600; margin-bottom: 4px; }
+            .line-legend table { border-collapse: collapse; }
+            .line-legend td { padding: 2px 14px 2px 0; }
             @media print { body { padding: 0.5cm; } }
           </style>
         </head>
         <body>
           <h1>${isAero ? 'Starting ' : ''}Line ${startLine} — Roster</h1>
           <div class="meta">${formatDisplay(start)} to ${formatDisplay(end)} &bull; ${data.rosterTypeLabel || ROSTER_TYPE_LABELS[rosterType]}${!isAero ? ' &bull; Shift pattern ' + shiftKey : ''} &bull; Generated ${formatDisplay(new Date())}</div>
-          <table>
-            <thead><tr><th>Date</th>${isAero ? '<th>Active Line</th>' : ''}<th>Shift</th><th>Notes</th></tr></thead>
-            <tbody>${rowsHtml}</tbody>
-          </table>
-          <div class="legend">Highlighted rows are your requested days off.${activeLineNote} ${legendLetters}</div>
+          ${calendarHtml}
+          <div class="legend">Bold green = requested off &amp; rostered off. Bold red = requested off but still rostered on. ${legendLetters}</div>
+          ${isAero ? buildActiveLineLegend(data.days) : ''}
         </body>
         </html>`);
       win.document.close();
